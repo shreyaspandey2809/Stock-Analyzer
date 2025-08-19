@@ -2,9 +2,9 @@ use std::io::{self, Write};
 use std::fs::File;
 use std::process::Command;
 use plotters::prelude::*;
-use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
 use serde_json::{Value, json};
 use chrono::NaiveDate; 
+use reqwest;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -14,78 +14,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     io::stdin().read_line(&mut symbol)?;
     let symbol = symbol.trim().to_string();
 
-    print!("Is this an Indian stock? (y/n): ");
-    io::stdout().flush()?;
-    let mut is_indian = String::new();
-    io::stdin().read_line(&mut is_indian)?;
-    let is_indian = is_indian.trim().to_lowercase();
-
-    // API URL
-    let (url, is_indian_stock) = if is_indian == "y" {
-        (
-            format!(
-                "https://indianstockexchange.p.rapidapi.com/index.php?id={}",
-                symbol
-            ),
-            true,
-        )
-    } else {
-        (
-            format!(
-                "https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={}&apikey=MD6KR6R3WO38A4C0",
-                symbol
-            ),
-            false,
-        )
-    };
+    let url = format!(
+        "https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={}&apikey=MD6KR6R3WO38A4C0",
+        symbol
+    );
 
     println!("Fetching stock data...");
     let client = reqwest::Client::new();
-    let res = if is_indian_stock {
-        let mut headers = HeaderMap::new();
-        headers.insert("x-rapidapi-host", HeaderValue::from_static("indianstockexchange.p.rapidapi.com"));
-        headers.insert("x-rapidapi-key", HeaderValue::from_static("3f08e3918fmsh63b60890064fb87p150bd5jsn19dc4f77731e"));
-        headers.insert(USER_AGENT, HeaderValue::from_static("Rust CLI"));
-        client.get(&url).headers(headers).send().await?
-    } else {
-        client.get(&url).send().await?
-    };
+    let res = client.get(&url).send().await?;
 
     let body = res.text().await?;
     let json: Value = serde_json::from_str(&body)?;
 
     let mut data: Vec<(NaiveDate, f64)> = Vec::new();
-    if is_indian_stock {
-        if let Some(data_array) = json.as_array() {
-            data = data_array
-                .iter()
-                .filter_map(|entry| {
-                    let date_str = entry.get("date")?.as_str()?; // Adjust key if different
-                    let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok()?;
-                    let close = entry.get("close")?
-                        .as_f64()
-                        .or_else(|| entry.get("close")?.as_str()?.parse::<f64>().ok())?;
-                    Some((date, close))
-                })
-                .collect();
-        } else {
-            eprintln!("Error: Indian stock API response format not as expected.");
-            return Ok(());
-        }
+
+    if let Some(series) = json.get("Time Series (Daily)").and_then(|s| s.as_object()) {
+        data = series
+            .iter()
+            .filter_map(|(date_str, values)| {
+                let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok()?;
+                let close = values["4. close"].as_str()?.parse::<f64>().ok()?;
+                Some((date, close))
+            })
+            .collect();
     } else {
-        if let Some(series) = json.get("Time Series (Daily)").and_then(|s| s.as_object()) {
-            data = series
-                .iter()
-                .filter_map(|(date_str, values)| {
-                    let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok()?;
-                    let close = values["4. close"].as_str()?.parse::<f64>().ok()?;
-                    Some((date, close))
-                })
-                .collect();
-        } else {
-            eprintln!("Error: Alpha Vantage response is missing 'Time Series (Daily)'.");
-            return Ok(());
-        }
+        eprintln!("Error: Alpha Vantage response is missing 'Time Series (Daily)'.");
+        return Ok(());
     }
 
     data.sort_by(|a, b| a.0.cmp(&b.0));
