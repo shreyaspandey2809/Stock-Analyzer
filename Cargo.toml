@@ -13,3 +13,4 @@ colored = "2.0"
 plotters = "0.3"
 crossterm = "0.25" 
 textplots = "0.8.7"
+rusqlite = { version = "0.31", features = ["bundled"] }
