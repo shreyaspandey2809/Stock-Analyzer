@@ -3,11 +3,57 @@ use std::fs::File;
 use std::process::Command;
 use plotters::prelude::*;
 use serde_json::{Value, json};
-use chrono::NaiveDate; 
+use chrono::NaiveDate;
 use reqwest;
+use rusqlite::{params, Connection};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize DB
+    let conn = Connection::open("history.db")?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            date TEXT NOT NULL,
+            trend TEXT,
+            predicted_price REAL,
+            recommendation TEXT
+        )",
+        [],
+    )?;
+
+    loop {
+        println!("\n===========================");
+        println!("📊 Stock Analyzer Menu");
+        println!("1. Fetch & analyze new stock");
+        println!("2. View past records");
+        println!("3. Exit");
+        println!("===========================\n");
+
+        print!("Enter your choice: ");
+        io::stdout().flush()?;
+        let mut choice = String::new();
+        io::stdin().read_line(&mut choice)?;
+        match choice.trim() {
+            "1" => {
+                fetch_and_analyze(&conn).await?;
+            }
+            "2" => {
+                show_history(&conn)?;
+            }
+            "3" => {
+                println!("👋 Exiting program...");
+                break;
+            }
+            _ => println!("❌ Invalid choice, try again."),
+        }
+    }
+
+    Ok(())
+}
+
+async fn fetch_and_analyze(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
     print!("Enter stock symbol: ");
     io::stdout().flush()?;
     let mut symbol = String::new();
@@ -71,12 +117,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let predicted_price = ai_output["predicted_price"].as_f64().unwrap_or(0.0);
+    let trend = ai_output["trend"].as_str().unwrap_or("N/A").to_string();
+    let recommendation = ai_output["recommendation"].as_str().unwrap_or("N/A").to_string();
 
     println!("\n AI Analysis:");
-    println!("Trend           : {}", ai_output["trend"].as_str().unwrap_or("N/A"));
+    println!("Trend           : {}", trend);
     println!("Predicted Price : {:.2}", predicted_price);
-    println!("Recommendation  : {}", ai_output["recommendation"].as_str().unwrap_or("N/A"));
+    println!("Recommendation  : {}", recommendation);
 
+    // 📌 Save to database
+    let today = chrono::Utc::now().date_naive().to_string();
+    conn.execute(
+        "INSERT INTO history (symbol, date, trend, predicted_price, recommendation)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![symbol, today, trend, predicted_price, recommendation],
+    )?;
+    println!("💾 Saved analysis to database.");
+
+    // Plot chart
     let root = BitMapBackend::new("chart.png", (800, 600)).into_drawing_area();
     root.fill(&WHITE)?;
 
@@ -121,6 +179,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     chart.configure_series_labels().border_style(&BLACK).draw()?;
 
     println!("📈 Chart saved as chart.png");
+
+    Ok(())
+}
+
+fn show_history(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n📂 Past Records:");
+    let mut stmt = conn.prepare(
+        "SELECT symbol, date, trend, predicted_price, recommendation 
+         FROM history ORDER BY id DESC LIMIT 10",
+    )?;
+
+    let records = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, f64>(3)?,
+            row.get::<_, String>(4)?,
+        ))
+    })?;
+
+    for rec in records {
+        let (symbol, date, trend, price, recmd) = rec?;
+        println!("{} [{}] → {} | Pred: {:.2} | {}", symbol, date, trend, price, recmd);
+    }
 
     Ok(())
 }
