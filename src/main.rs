@@ -95,23 +95,23 @@ async fn fetch_and_analyze(conn: &Connection) -> Result<(), Box<dyn std::error::
     );
     let file = File::create("stock_data.json")?;
     serde_json::to_writer_pretty(file, &json_data)?;
-    println!("✅ Saved stock data to stock_data.json");
+    println!(" Saved stock data to stock_data.json");
 
-    println!("🤖 Running AI prediction...");
+    println!(" Running AI prediction...");
     let python_cmd = if cfg!(target_os = "windows") { "python" } else { "python3" };
     let status = Command::new(python_cmd)
         .arg("predict.py")
         .status()?;
 
     if !status.success() {
-        eprintln!("❌ Error: Python script failed.");
+        eprintln!(" Error: Python script failed.");
         return Ok(());
     }
 
     let ai_output: Value = match std::fs::read_to_string("ai_output.json") {
         Ok(content) => serde_json::from_str(&content)?,
         Err(_) => {
-            eprintln!("❌ Error: Could not read ai_output.json");
+            eprintln!(" Error: Could not read ai_output.json");
             return Ok(());
         }
     };
@@ -125,14 +125,14 @@ async fn fetch_and_analyze(conn: &Connection) -> Result<(), Box<dyn std::error::
     println!("Predicted Price : {:.2}", predicted_price);
     println!("Recommendation  : {}", recommendation);
 
-    // 📌 Save to database
+    //  Save to database
     let today = chrono::Utc::now().date_naive().to_string();
     conn.execute(
         "INSERT INTO history (symbol, date, trend, predicted_price, recommendation)
          VALUES (?1, ?2, ?3, ?4, ?5)",
         params![symbol, today, trend, predicted_price, recommendation],
     )?;
-    println!("💾 Saved analysis to database.");
+    println!(" Saved analysis to database.");
 
     // Plot chart
     let root = BitMapBackend::new("chart.png", (800, 600)).into_drawing_area();
@@ -178,13 +178,13 @@ async fn fetch_and_analyze(conn: &Connection) -> Result<(), Box<dyn std::error::
 
     chart.configure_series_labels().border_style(&BLACK).draw()?;
 
-    println!("📈 Chart saved as chart.png");
+    println!(" Chart saved as chart.png");
 
     Ok(())
 }
 
 fn show_history(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
-    println!("\n📂 Past Records:");
+    println!("\n Past Records:");
     let mut stmt = conn.prepare(
         "SELECT symbol, date, trend, predicted_price, recommendation 
          FROM history ORDER BY id DESC LIMIT 10",
